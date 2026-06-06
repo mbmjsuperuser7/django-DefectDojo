@@ -1,0 +1,69 @@
+# prvis-ai — DefectDojo
+# Stripped: helm, test configs, dev overrides, integration tests
+# Added: PostgreSQL backend (shared data layer), resource limits, prvis GRC feed
+
+version: "3.8"
+
+services:
+  defectdojo:
+    build:
+      context: ..
+      dockerfile: Dockerfile.django-debian
+    container_name: defectdojo
+    restart: unless-stopped
+    ports:
+      - "8093:8080"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+    environment:
+      - DD_DATABASE_URL=postgresql://prvis:${POSTGRES_PASSWORD:-changeme}@pgbouncer:5432/defectdojo
+      - DD_SECRET_KEY=${DEFECTDOJO_SECRET_KEY:-changeme-replace-with-50-random-chars}
+      - DD_ALLOWED_HOSTS=*
+      - DD_SOCIAL_AUTH_ENABLED=false
+      - DD_DJANGO_METRICS_ENABLED=true
+      - DD_SESSION_COOKIE_SECURE=false
+      - DD_CSRF_COOKIE_SECURE=false
+      # prvis webhook — notifies GRC feed on new findings
+      - DD_WEBHOOKS_ENABLED=true
+      - DD_ENABLE_AUDITLOG=true
+    volumes:
+      - defectdojo-media:/app/media
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v2/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - agent-network
+
+  defectdojo-celery:
+    build:
+      context: ..
+      dockerfile: Dockerfile.django-debian
+    container_name: defectdojo-celery
+    restart: unless-stopped
+    command: celery -A dojo worker -l info --concurrency 2
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+    environment:
+      - DD_DATABASE_URL=postgresql://prvis:${POSTGRES_PASSWORD:-changeme}@pgbouncer:5432/defectdojo
+      - DD_SECRET_KEY=${DEFECTDOJO_SECRET_KEY:-changeme-replace-with-50-random-chars}
+      - DD_CELERY_BROKER_URL=redis://${REDIS_ADDR:-redis:6379}/1
+    networks:
+      - agent-network
+
+volumes:
+  defectdojo-media:
+
+networks:
+  agent-network:
+    external: true
